@@ -1,0 +1,68 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-west-2:080328315892:task-definition/liveclass-task-def:1",
+    "containerDefinitions": [
+        {
+            "name": "liveclass-container",
+            "image": "080328315892.dkr.ecr.us-west-2.amazonaws.com/liveclass-ecr@sha256:0062a54a8270ac6db8d89e296809755e00c2784cf0a1daf070df863fdd9d5f8d",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp",
+                    "name": "liveclass-container-8000-tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "environmentFiles": [],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "ulimits": [],
+            "systemControls": []
+        }
+    ],
+    "family": "liveclass-task-def",
+    "executionRoleArn": "arn:aws:iam::080328315892:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "revision": 1,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.21"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE",
+        "MANAGED_INSTANCES"
+    ],
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    },
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "256",
+    "memory": "512",
+    "registeredAt": "2026-10-12T16:59:30.749Z",
+    "registeredBy": "arn:aws:iam::080328315892:user/devops_user_4164966_257385",
+    "enableFaultInjection": false,
+    "tags": []
+}

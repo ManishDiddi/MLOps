@@ -1,0 +1,24 @@
+{
+  "model_version": "milepost-2026-09-23",
+  "decision_threshold": 0.8,
+  "price_features": [
+    "year",
+    "seller_type",
+    "km_driven",
+    "fuel_type",
+    "transmission_type",
+    "mileage",
+    "engine",
+    "max_power",
+    "seats"
+  ],
+  "loan_features": [
+    "Gender",
+    "Married",
+    "ApplicantIncome",
+    "LoanAmount",
+    "Credit_History"
+  ],
+  "price_test_mae_lakhs": 0.9815,
+  "sklearn_version": "1.7.2"
+}
