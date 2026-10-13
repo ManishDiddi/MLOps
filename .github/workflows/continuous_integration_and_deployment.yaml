@@ -48,7 +48,7 @@ jobs:
               uses: docker/build-push-action@v7 #https://github.com/docker/build-push-action
               with:
                 push: true
-                tags: manishdiddi/oct7_2026_live_ci:latest  # Replace with your Docker Hub username and image name
+                tags: manish07062003/ci_images:latest  # Replace with your Docker Hub username and image name
 
     # job3:
     #   needs: job1
