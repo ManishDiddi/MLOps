@@ -71,7 +71,7 @@ jobs:
           id: build-image
           env:
             ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-            ECR_REPOSITORY: testingdemo-ecr
+            ECR_REPOSITORY: leviathan-ecr
             IMAGE_TAG: ${{ github.sha }}
           run: |
             docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
@@ -82,14 +82,14 @@ jobs:
           id: task-def
           uses: aws-actions/amazon-ecs-render-task-definition@v1
           with:
-            task-definition: testingdemo-task-revision1.json
-            container-name: testingdemo-container
+            task-definition: leviathan-task-revision1.json
+            container-name: leviathan-container
             image: ${{ steps.build-image.outputs.image }}
 
         - name: Deploy Amazon ECS task definition
           uses: aws-actions/amazon-ecs-deploy-task-definition@v2
           with:
             task-definition: ${{ steps.task-def.outputs.task-definition }}
-            service: testingdemo-service
-            cluster: testingdemo-cluster
+            service: leviathan-service
+            cluster: leviathan-cluster
             wait-for-service-stability: true

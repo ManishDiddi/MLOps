@@ -62,8 +62,8 @@ def index():
 </head>
 <body>
   <div class="content">
-	<div class="title">Welcome to CI Session!!</div>
-	<div class="subtitle">Let's learn what is continuous integration!! :)</div>
+	<div class="title">Welcome to Continuous Deployment Session! v2</div>
+	<div class="subtitle">Let's learn how to use Automatic Load Balancer 💃🏻 :)</div>
   </div>
 </body>
 </html>
