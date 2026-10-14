@@ -62,7 +62,7 @@ def index():
 <body>
   <div class="content">
 	<div class="title">Welcome to AWS ECS Session! v2</div>
-	<div class="subtitle">Let's learn how to deploy on AWS ECS.</div>
+	<div class="subtitle">Let's learn how to deploy on AWS ECS :).</div>
   </div>
 </body>
 </html>

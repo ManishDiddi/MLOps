@@ -61,8 +61,8 @@ def index():
 </head>
 <body>
   <div class="content">
-	<div class="title">Welcome to CI Session!</div>
-	<div class="subtitle">Let's learn what is continuous integration!!.</div>
+	<div class="title">Welcome to CI Session!!</div>
+	<div class="subtitle">Let's learn what is continuous integration!! :)</div>
   </div>
 </body>
 </html>
