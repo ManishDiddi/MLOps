@@ -64,11 +64,11 @@ flowchart LR
 | Task definition | ECS needs a recipe: image, CPU and memory, port, role, logs | `milepost-fargate-task` |
 | Service | Someone has to start the containers and replace any that stop | `milepost-fargate-service`: 2 tasks over both subnets |
 | Experiments | What does ECS do when you scale, or when a task stops? | Scale 2 → 4 → 2; stop a task by hand and watch the replacement |
-| Load balancer (written out) | Every task has its own address, and it changes when a task is replaced | One DNS name in front; ECS registers each task's IP for you |
+| Load balancer | Every task has its own address, and it changes when a task is replaced | One DNS name in front; ECS registers each task's IP for you |
 
 - Everything happens in **US West (Oregon), `us-west-2`**.
-- **Steps 1–14 and the cleanup (step 17) were run as shown;** the outputs quoted in them are real.
-- **The load balancer section (step 15) is written out, not run.** Its screenshots show the console forms filled in, but stop before **Create**, because the account they were taken in has no Elastic Load Balancing permission.
+- **Every step was run as shown;** the outputs quoted are real.
+- **Step 15 was run on a rebuild of the same setup,** so its task IDs and addresses differ from steps 13–14.
 
 ## How to go through this folder
 
@@ -88,7 +88,7 @@ flowchart LR
 4. Create the security group, push the image to ECR, create the execution role and the log group (steps 6–9).
 5. Create the cluster, the task definition and the service (steps 10–12).
 6. Call the API on both tasks (step 13), then scale and stop tasks and watch ECS react (step 14).
-7. **If your account allows it:** put a load balancer in front (step 15).
+7. Put a load balancer in front, attach it to the service, then stop a task again and compare (step 15).
 8. Clean up (step 17).
 
 - Commands are written for **bash**. On Windows, run them in Git Bash or WSL.
@@ -132,6 +132,9 @@ flowchart LR
 | Log group | A named place in CloudWatch Logs that holds log streams; ECS writes one stream per container |
 | Target group | The list of targets a load balancer may send requests to, plus their health check. For Fargate the targets are task IPs |
 | ALB | Application Load Balancer: one HTTP entry point that spreads requests across healthy targets |
+| Listener | The port and protocol a load balancer accepts (here HTTP 80), and where it forwards those requests |
+| Health check | A request the load balancer sends every target on a schedule (here `GET /health` every 30 seconds); only targets that pass get traffic |
+| Draining | A target on its way out of a target group: it gets no new requests while the open ones finish |
 
 ## 0. Run the API on your laptop (optional)
 
@@ -558,8 +561,6 @@ curl -X POST http://<public-ip>:8000/predict/loan \
 
 **An Application Load Balancer gives one DNS name and sends each request to a healthy task. ECS adds every new task's IP to the load balancer's target group, and removes stopped ones.**
 
-- These steps were filled in on the console, but the screenshots stop before **Create**: the account they were taken in has no Elastic Load Balancing permission.
-
 ```mermaid
 flowchart LR
     user["Browser or curl"] -->|"http://ALB-DNS-NAME"| alb["ALB milepost-fargate-alb<br/>a node in each AZ"]
@@ -571,10 +572,19 @@ flowchart LR
 
 ### 15.1 Security group for the load balancer
 
-- **EC2 → Security Groups → Create**:
-  - name `milepost-fargate-alb-sg`;
-  - VPC `milepost-fargate-vpc`;
-  - inbound **HTTP 80** from **Anywhere-IPv4**.
+- **EC2 → Security Groups → Create security group**
+
+| Setting | Value |
+|---|---|
+| Security group name | `milepost-fargate-alb-sg` |
+| Description | `Milepost load balancer on port 80` |
+| VPC | `milepost-fargate-vpc` (the form starts on the default VPC; change it) |
+| Inbound rule | Type **HTTP** (port 80), source type **Anywhere-IPv4** |
+| Outbound rule | Leave **All traffic** (the load balancer forwards to the tasks on port 8000) |
+
+![HTTP 80 from anywhere, in milepost-fargate-vpc](screenshots/43_alb_security_group.jpg)
+
+- This is the only group open to the whole internet. The tasks' group gets a rule pointing at it in step 15.4.
 
 ### 15.2 Target group
 
@@ -590,11 +600,12 @@ flowchart LR
 | Protocol version | HTTP1 |
 | Health check path | `/health` |
 
-![Target type IP addresses, milepost-fargate-tg, HTTP 8000](screenshots/43_tg_ip_type.jpg)
+![Target type IP addresses, milepost-fargate-tg, HTTP 8000](screenshots/44_tg_ip_type.jpg)
 
-![VPC and health check path /health](screenshots/44_tg_vpc_health.jpg)
+![VPC and health check path /health](screenshots/45_tg_vpc_health.jpg)
 
-- **Next** → register nothing → **Create target group**. ECS registers each task's private IP itself.
+- Leave **Target optimizer** off and the advanced health check settings at their defaults: a check every 30 seconds, **Healthy** after 5 passes in a row, **Unhealthy** after 2 failures.
+- **Next** → register nothing → **Next** → **Create target group**. ECS registers each task's private IP itself.
 - **Why IP, not Instances:** a Fargate task runs on no EC2 instance you can pick. It has its own network interface and IP, and that IP is the target.
 - `/health` makes the service score a test car and buyer. A task whose models fail to load gets taken out, not just one whose port is closed.
 
@@ -612,18 +623,37 @@ flowchart LR
 | Security groups | `milepost-fargate-alb-sg` only (remove `default`) |
 | Listener | HTTP 80 → Forward to target groups → `milepost-fargate-tg` |
 
-![Name, internet-facing, IPv4](screenshots/45_alb_basic.jpg)
+![Name, internet-facing, IPv4](screenshots/46_alb_basic.jpg)
 
-![Two AZs, one public subnet each, each showing Route table: IGW](screenshots/46_alb_two_azs.jpg)
+![Two AZs, one public subnet each, each showing Route table: IGW](screenshots/47_alb_two_azs.jpg)
 
-![ALB security group and the HTTP 80 listener](screenshots/47_alb_sg_listener.jpg)
+![ALB security group and the HTTP 80 listener forwarding to milepost-fargate-tg](screenshots/48_alb_sg_listener.jpg)
 
 - **The console requires at least two AZs:** the load balancer places a node in each one, which is why the network has two subnets in two AZs.
 - It also checks that each subnet's route table has an internet gateway route (`Route table: IGW ✓`).
-- In the listener, pick `milepost-fargate-tg` from the target group list. The screenshot shows the list empty because the target group was not created in that account.
-- **Create load balancer**, then wait for state **Active** (a few minutes).
+- **Create load balancer.** The state goes from **Provisioning** to **Active** in a few minutes.
+- Copy the **DNS name** from the details page. It is the one address clients use from now on.
 
-### 15.4 Attach the load balancer to the service
+![Active, a subnet in each AZ, the DNS name, and the listener forwarding to the target group](screenshots/49_alb_active.jpg)
+
+### 15.4 Let the load balancer reach the tasks
+
+**Do this before attaching the load balancer to the service.**
+
+- **EC2 → Security Groups → `milepost-fargate-task-sg` → Edit inbound rules**
+  1. **Delete** the port 8000 rule from My IP.
+  2. **Add rule**: type **Custom TCP**, port **8000**, source **Custom** → type `sg-` and pick `milepost-fargate-alb-sg`, description `From the load balancer only`.
+  3. **Preview changes** → **Confirm**.
+
+![Preview: revoke the My IP rule, add port 8000 from the load balancer's group](screenshots/50_task_sg_from_alb.jpg)
+
+- **Why first:** health checks and forwarded requests come from the load balancer's own addresses inside the VPC. With only the My IP rule they time out, the targets turn **Unhealthy**, and ECS replaces tasks that fail the load balancer's health check, so the deployment in step 15.5 would keep stopping its new tasks.
+- **Delete and add, don't edit:** switching the existing rule's source to a security group fails with `You may not specify a referenced group id for an existing IPv4 CIDR rule.`
+- The new rule shows the group by ID; `sg-0134…` here is `milepost-fargate-alb-sg`.
+- From now on, the only way in is through the load balancer.
+- **Leave Public IP on:** the tasks still need it to pull their image from ECR. The security group, not the missing address, is what keeps outsiders away.
+
+### 15.5 Attach the load balancer to the service
 
 - **ECS → `milepost-fargate-service` → Update service → Load balancing → Use load balancing → Add load balancer**
 
@@ -635,33 +665,80 @@ flowchart LR
 | Listener | HTTP:80 |
 | Target group | `milepost-fargate-tg` |
 
-![The service's load balancing section: type, container, load balancer, listener, target group](screenshots/48_service_add_load_balancer.jpg)
+- The target group list shows why step 15.2 chose IP addresses: a target group of type Instances is greyed out with `Target type is instance but must be ip`.
 
-- **Update.** ECS starts a new deployment: new tasks register in the target group, and each one counts as healthy only once `/health` passes.
+![The target group list: milepost-fargate-tg, and an Instances-type group greyed out](screenshots/51_service_tg_must_be_ip.jpg)
+
+![The service's load balancing section: type, container, load balancer, listener, target group](screenshots/52_service_add_load_balancer.jpg)
+
+- **Update.** ECS starts a new deployment.
+- **What happened:**
+  - ECS started two new tasks, one per AZ, and registered each one's private IP in `milepost-fargate-tg`.
+  - Both targets were **Healthy** about 1.5 minutes after **Update**.
+  - Then ECS stopped the two old tasks, which had never been registered.
+  - The deployment showed **Completed** about 4 minutes after **Update**.
+
+![Both task IPs registered by ECS and Healthy, one in each AZ](screenshots/53_tg_targets_healthy.jpg)
+
 - The target group must already be the listener's target (step 15.3); ECS refuses a target group that no load balancer uses.
 - You can also choose the load balancer when you create a service, in the same **Load balancing** section.
 
-### 15.5 Only the load balancer may reach the tasks
-
-- Edit `milepost-fargate-task-sg` → inbound rule port 8000: change the source to the security group `milepost-fargate-alb-sg`, and remove the **My IP** rule.
-- From now on, the only way in is through the load balancer.
-- **Leave Public IP on:** the tasks still need it to pull their image from ECR. The security group, not the missing address, is what keeps outsiders away.
-
-### 15.6 Test it (expected results; not run in the screenshot account)
-
-- Copy the load balancer's **DNS name** from its details page.
+### 15.6 Test it
 
 ```bash
 for i in $(seq 1 10); do curl -s http://<alb-dns-name>/; echo; done
 ```
 
-- **Expected:** answers alternate between the two tasks, `us-west-2a` and `us-west-2b`, all from one address.
-- **Repeat the stop experiment (14.2):**
-  - stop one task;
-  - the target group drains it and stops sending it requests;
-  - ECS starts a replacement and registers its new IP in the target group;
-  - the URL never changes.
-- **Together:** the load balancer gives the one stable address; the service replaces failed tasks. Each covers what the other can't.
+```json
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","task_id":"b7482780dd82424eb7a409db3ee286ac"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","task_id":"e482367be6db433f9435ac4af5a9ea6f"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","task_id":"e482367be6db433f9435ac4af5a9ea6f"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","task_id":"e482367be6db433f9435ac4af5a9ea6f"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","task_id":"b7482780dd82424eb7a409db3ee286ac"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","task_id":"e482367be6db433f9435ac4af5a9ea6f"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","task_id":"b7482780dd82424eb7a409db3ee286ac"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","task_id":"b7482780dd82424eb7a409db3ee286ac"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","task_id":"e482367be6db433f9435ac4af5a9ea6f"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","task_id":"b7482780dd82424eb7a409db3ee286ac"}}
+```
+
+- **What happened:** one address, both tasks: 5 answers from `us-west-2a`, 5 from `us-west-2b`, in no fixed order.
+- **In the browser:** `http://<alb-dns-name>/` (and `/docs`) work the same way. Reload a few times to see `served_by` change.
+
+![Through the load balancer: answered by the task in us-west-2a](screenshots/54_alb_answers_a.png)
+
+![The same address: answered by the task in us-west-2b](screenshots/55_alb_answers_b.png)
+
+### 15.7 Experiment: stop a task again
+
+- **Before you click, predict:** compared with step 14.2, what does a client of the DNS name see?
+- In a terminal, send one request per second and print each status code (`000` means no answer within 5 seconds):
+
+```bash
+while true; do curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://<alb-dns-name>/; sleep 1; done
+```
+
+- Then stop the task in `us-west-2a` (**Tasks → tick it → Stop → Stop selected**, as in step 14.2).
+- **What happened:**
+
+| Time after Stop | What happened |
+|---|---|
+| 4 seconds | ECS started a replacement task |
+| 13 seconds | ECS deregistered the old task's IP: **Draining**. The old task kept running, in **Deactivating** |
+| 32 seconds | The replacement's IP, `10.1.1.20`, registered: **Initial** |
+| About 1 minute | The replacement **Healthy**, in `us-west-2a` like the task it replaced |
+| About 5 minutes | Draining ended, then the old task stopped |
+| The whole time | 196 requests, one per second: every one answered `200` |
+
+![The old task Draining while its replacement is Initial, the other task Healthy](screenshots/56_tg_draining.jpg)
+
+![Service events: started, deregistered, began draining, registered, steady state](screenshots/57_service_events.jpg)
+
+- **Why 5 minutes of draining:** the target group's deregistration delay is 300 seconds by default. That's how long the load balancer gives open requests to finish before the task is stopped.
+- **What this shows:**
+  - In step 14.2 the stopped task's address simply went dead. Here clients kept one address, and no request failed.
+  - ECS deregisters a task before stopping it, so the load balancer stops sending it requests first.
+  - **Together:** the load balancer gives the one stable address; the service replaces failed tasks. Each covers what the other can't.
 
 ## 16. Troubleshooting
 
@@ -675,47 +752,62 @@ for i in $(seq 1 10); do curl -s http://<alb-dns-name>/; echo; done
 | Service stays below its desired count; its events mention a vCPU limit | The account's Fargate vCPU quota is used up | Lower the desired count, or ask for more in **Service Quotas** |
 | `docker build` stops at `pip install` with `Could not find a version… (from versions: none)` | pip timed out reaching PyPI from inside Docker | Run the build again; on a slow connection add `--timeout 100` to the `pip install` line |
 | Browser shows a warning page for `http://IP:8000` | Plain HTTP, no certificate | Continue past the warning, or use `curl` |
+| The service's **Target group** list greys out a group: `Target type is instance but must be ip` | That target group was made with target type **Instances** | Create one with **IP addresses** (step 15.2) |
+| Targets **Unhealthy**, **Request timed out**, and the service keeps replacing tasks | The tasks' security group doesn't let the load balancer in | Allow port 8000 from `milepost-fargate-alb-sg` (step 15.4) |
+| `You may not specify a referenced group id for an existing IPv4 CIDR rule.` | An IP-address rule can't be switched to a security group source | Delete the rule and add a new one (step 15.4) |
+| A stopped task stays in **Deactivating** for about 5 minutes | Its target is draining: the target group's deregistration delay is 300 seconds | Nothing to fix; requests already go to the other tasks |
+| The target group page still shows an old health status | The page doesn't refresh by itself | Its refresh button, or reload the page |
 
 ## 17. Clean up
 
 **Running tasks bill by the second, each with a public IP; delete everything in this order.**
 
-1. **Load balancer, if you created one:** delete `milepost-fargate-alb`, then the target group `milepost-fargate-tg`.
+1. **Load balancer:**
+   - **Load balancers → tick `milepost-fargate-alb` → Actions → Delete load balancer** → type `confirm` → **Delete**. Its listener goes with it; the target group stays.
+
+![Delete load balancer: type confirm](screenshots/58_delete_alb.jpg)
+
+   - **Target groups → tick `milepost-fargate-tg` → Actions → Delete → Delete.**
+
+![Delete the target group](screenshots/59_delete_tg.jpg)
+
+   - **Why before the service:** with the target group gone, there is nothing to drain. The service's tasks stop at once instead of draining for 5 minutes each (step 15.7); the service was gone about 2 minutes after the delete.
+
 2. **Service:** **ECS → `milepost-fargate-cluster` → Services → `milepost-fargate-service` → Delete service** → tick **Force delete** → type `delete`.
    - **Force delete** scales the service to 0 for you; without it, you set desired tasks to 0 first.
    - Its tasks stop with it, and their network interfaces were gone about a minute later.
    - The dialog says it also deletes the CloudFormation stack the console made in step 12. It did.
 
-![Delete service: force delete, and the CloudFormation stack goes too](screenshots/49_delete_service.jpg)
+![Delete service: force delete, and the CloudFormation stack goes too](screenshots/60_delete_service.jpg)
 
 3. **Cluster:** **Clusters → `milepost-fargate-cluster` → Actions → Delete cluster** → type `delete milepost-fargate-cluster`.
 
-![Delete cluster: type the phrase to confirm](screenshots/50_delete_cluster.jpg)
+![Delete cluster: type the phrase to confirm](screenshots/61_delete_cluster.jpg)
 
 4. **Task definition:**
    - **Task definitions → `milepost-fargate-task` → tick revision 1 → Actions → Deregister.**
    - Then set the filter to **Inactive** → tick it → **Actions → Delete** → type `delete`.
 
-![Deregister: the revision becomes INACTIVE](screenshots/51_deregister_task_definition.jpg)
+![Deregister: the revision becomes INACTIVE](screenshots/62_deregister_task_definition.jpg)
 
-![Delete the inactive revision](screenshots/52_delete_task_definition.jpg)
+![Delete the inactive revision](screenshots/63_delete_task_definition.jpg)
 
 5. **Log group:** **CloudWatch → Logs → Log Management → tick `/ecs/milepost-fargate-task` → Actions → Delete log group(s) → Delete**.
 
-![Delete the log group](screenshots/53_delete_log_group.jpg)
+![Delete the log group](screenshots/64_delete_log_group.jpg)
 
 6. **ECR:** **Repositories → `milepost-fargate` → Delete** → type `delete`. This deletes the images inside it too.
 
-![Delete the milepost-fargate repository](screenshots/54_delete_ecr_repo.jpg)
+![Delete the milepost-fargate repository](screenshots/65_delete_ecr_repo.jpg)
 
 7. **VPC:** **VPC → Your VPCs → `milepost-fargate-vpc` → Actions → Delete VPC** → type `delete`.
    - The dialog lists what goes with it: the internet gateway, the route table, both security groups and both subnets.
    - The task security group shows `–` as its name. That column shows the *Name tag*, which the security group form doesn't set.
    - If it refuses because of network interfaces, wait a minute: stopped tasks release theirs shortly after.
 
-![Delete VPC lists the 6 resources deleted with it](screenshots/55_delete_vpc.jpg)
+![Delete VPC lists the 6 resources deleted with it](screenshots/66_delete_vpc.jpg)
 
-![The VPC and its 6 resources deleted; only the default VPC is left](screenshots/56_vpc_deleted.jpg)
+![The VPC and its 6 resources deleted; only the default VPC is left](screenshots/67_vpc_deleted.jpg)
 
 8. **IAM:** **Roles → `MilepostFargateExecutionRole` → Delete**.
    - Some managed accounts deny role deletion. The account used here refused both detaching the policy and deleting the role (`explicit deny`).
@@ -727,6 +819,8 @@ for i in $(seq 1 10); do curl -s http://<alb-dns-name>/; echo; done
 - **Check that nothing is left.** Empty output means clean:
 
 ```bash
+aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text
+aws elbv2 describe-target-groups --query 'TargetGroups[].TargetGroupName' --output text
 aws ecs list-clusters --query 'clusterArns' --output text
 aws ecs list-task-definitions --family-prefix milepost-fargate-task --query 'taskDefinitionArns' --output text
 aws logs describe-log-groups --log-group-name-prefix /ecs/milepost-fargate --query 'logGroups[].logGroupName' --output text
@@ -762,6 +856,6 @@ aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMP
 | Public IPv4 address | $0.005 per hour each (one per task) |
 | ECR storage | $0.10 per GB-month (the 165 MB image: about $0.02 per month) |
 | CloudWatch Logs | $0.50 per GB ingested; these request lines come to a few kilobytes |
-| Load balancer, if created | $0.0225 per hour plus usage (LCU) |
+| Load balancer | $0.0225 per hour plus usage (LCU), and $0.005 per hour for each of its public IPv4 addresses (one per AZ here) |
 
-- Two tasks running cost about **$0.035 per hour, roughly $0.83 per day**. Cleaning up ends all of it.
+- Two tasks running cost about **$0.035 per hour, roughly $0.83 per day**. The load balancer adds about **$0.035 per hour**. Cleaning up ends all of it.

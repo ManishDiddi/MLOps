@@ -54,11 +54,11 @@ flowchart LR
 | IAM role | The instances need permission to pull, without access keys copied onto them | `MilepostEc2Role` with read-only ECR access |
 | EC2 + user data | Someone has to install Docker and start the container | A boot script that does it on first start |
 | Stop-one experiment | What really happens when one machine stops? | Observe it: the other keeps serving, nothing replaces the stopped one |
-| Load balancer (written out) | Two addresses, and no automatic failover | One DNS name in front of both, with health checks |
+| Load balancer | Two addresses, and no automatic failover | One DNS name in front of both, with health checks |
 
 - Everything happens in **US West (Oregon), `us-west-2`**.
-- **Steps 1–11 and the cleanup (step 14) were run as shown;** the outputs quoted in them are real.
-- **The load balancer section (step 12) is written out, not run.** Its screenshots show the console forms filled in, but stop before **Create**, because the account they were taken in has no Elastic Load Balancing permission.
+- **Every step was run as shown;** the outputs quoted are real.
+- **Step 12 was run on a rebuild of the same setup,** so its instance IDs and addresses differ from steps 10–11.
 
 ## How to go through this folder
 
@@ -78,7 +78,7 @@ flowchart LR
 4. Create the security group, the ECR repository and the IAM role, and push the image (steps 6–8).
 5. Launch the two instances (step 9).
 6. Call the API on both (step 10), then stop one and watch (step 11).
-7. **If your account allows it:** put a load balancer in front (step 12).
+7. Put a load balancer in front, then stop an instance again and compare (step 12).
 8. Clean up (step 14).
 
 - Commands are written for **bash**. On Windows, run them in Git Bash or WSL.
@@ -115,6 +115,9 @@ flowchart LR
 | IMDSv2 | Instance metadata service: an address inside each instance (`169.254.169.254`) that tells it its own AZ, instance ID and temporary role credentials |
 | Target group | The list of targets (instances, IPs) a load balancer may send requests to, plus their health check |
 | ALB | Application Load Balancer: one HTTP entry point that spreads requests across healthy targets |
+| Listener | The port and protocol a load balancer accepts (here HTTP 80), and where it forwards those requests |
+| Health check | A request the load balancer sends every target on a schedule (here `GET /health` every 30 seconds); only targets that pass get traffic |
+| Draining | A target on its way out of a target group: it gets no new requests while the open ones finish |
 
 ## 0. Run the API on your laptop (optional)
 
@@ -450,8 +453,6 @@ curl -X POST http://<public-ip>:8000/predict/loan \
 
 **An Application Load Balancer gives one DNS name, spreads requests across healthy instances, and stops sending requests to an instance that fails its health check.**
 
-- These steps were filled in on the console, but the screenshots stop before **Create**: the account they were taken in has no Elastic Load Balancing permission.
-
 ```mermaid
 flowchart LR
     user["Browser or curl"] -->|"http://ALB-DNS-NAME"| alb["ALB milepost-ec2-alb<br/>a node in each AZ"]
@@ -461,10 +462,19 @@ flowchart LR
 
 ### 12.1 Security group for the load balancer
 
-- **EC2 → Security Groups → Create**:
-  - name `milepost-ec2-alb-sg`;
-  - VPC `milepost-ec2-vpc`;
-  - inbound **HTTP 80** from **Anywhere-IPv4**.
+- **EC2 → Security Groups → Create security group**
+
+| Setting | Value |
+|---|---|
+| Security group name | `milepost-ec2-alb-sg` |
+| Description | `Milepost load balancer on port 80` |
+| VPC | `milepost-ec2-vpc` |
+| Inbound rule | Type **HTTP** (port 80), source type **Anywhere-IPv4** |
+| Outbound rule | Leave **All traffic** (the load balancer forwards to the instances on port 8000) |
+
+![HTTP 80 from anywhere, in milepost-ec2-vpc](screenshots/34_alb_security_group.jpg)
+
+- This is the only group open to the whole internet. The instances' group gets a rule pointing at it in step 12.5.
 
 ### 12.2 Target group
 
@@ -479,14 +489,25 @@ flowchart LR
 | Protocol version | HTTP1 |
 | Health check path | `/health` |
 
-![Instances, milepost-ec2-tg, HTTP 8000](screenshots/34_tg_settings.jpg)
+![Instances, milepost-ec2-tg, HTTP 8000](screenshots/35_tg_settings.jpg)
 
-![VPC and health check path /health](screenshots/35_tg_health_check.jpg)
+![VPC and health check path /health](screenshots/36_tg_health_check.jpg)
 
-- **Next** → tick both instances → port **8000** → **Include as pending below** → **Create target group**.
+- Leave **Target optimizer** off and the advanced health check settings at their defaults:
 
-![Both instances pending as targets, one in each AZ](screenshots/36_tg_register_targets.jpg)
+| Health check setting | Default |
+|---|---|
+| Interval | 30 seconds |
+| Timeout | 5 seconds |
+| Healthy threshold | 5 passes in a row |
+| Unhealthy threshold | 2 failures in a row |
+| Success code | 200 |
 
+- **Next** → tick both instances → port **8000** → **Include as pending below** → **Next** → **Create target group**.
+
+![Both instances pending as targets, one in each AZ](screenshots/37_tg_register_targets.jpg)
+
+- Until a load balancer uses the group, both targets show **Unused**.
 - `/health` makes the service score a test car and buyer. An instance whose models fail to load gets taken out, not just one whose port is closed.
 
 ### 12.3 Application Load Balancer
@@ -503,35 +524,102 @@ flowchart LR
 | Security groups | `milepost-ec2-alb-sg` only (remove `default`) |
 | Listener | HTTP 80 → Forward to `milepost-ec2-tg` |
 
-![Name, internet-facing, IPv4](screenshots/37_alb_basic.jpg)
+![Name, internet-facing, IPv4](screenshots/38_alb_basic.jpg)
 
-![Two AZs, one public subnet each, each showing Route table: IGW](screenshots/38_alb_two_azs.jpg)
+![Two AZs, one public subnet each, each showing Route table: IGW](screenshots/39_alb_two_azs.jpg)
 
-![ALB security group and the HTTP 80 listener forwarding to the target group](screenshots/39_alb_sg_listener.jpg)
+![ALB security group and the HTTP 80 listener forwarding to the target group](screenshots/40_alb_sg_listener.jpg)
 
 - **The console requires at least two AZs:** the load balancer places a node in each one, which is why the network has two subnets in two AZs.
 - It also checks that each subnet's route table has an internet gateway route (`Route table: IGW ✓`).
-- **Create load balancer**, then wait for state **Active** (a few minutes).
+- **Create load balancer.** The state goes from **Provisioning** to **Active**; that took about 3 minutes.
+- Copy the **DNS name** from the details page. It is the one address clients use from now on.
 
-### 12.4 Only the load balancer may reach the instances
+![Active, a subnet in each AZ, and the DNS name](screenshots/41_alb_active.jpg)
 
-- Edit `milepost-ec2-host-sg` → inbound rule port 8000: change the source to the security group `milepost-ec2-alb-sg`, and remove the **My IP** rule.
-- From now on, the only way in is through the load balancer.
+### 12.4 First look: both targets unhealthy
 
-### 12.5 Test it (expected results; not run in the screenshot account)
+- **EC2 → Target groups → `milepost-ec2-tg` → Targets**
 
-- Copy the load balancer's **DNS name** from its details page.
+![Both targets Unhealthy: Request timed out](screenshots/42_tg_unhealthy.jpg)
+
+- **What happened:**
+  - Both targets **Unhealthy**, health status details **Request timed out**.
+  - `curl http://<alb-dns-name>/` waited about 11 seconds, then got `504 Gateway Time-out`.
+- **Why:** health checks and forwarded requests come from the load balancer's own addresses inside the VPC. `milepost-ec2-host-sg` still allows port 8000 only from **My IP** (step 6), so nothing from the load balancer gets in.
+
+### 12.5 Let the load balancer in, and only it
+
+- **EC2 → Security Groups → `milepost-ec2-host-sg` → Edit inbound rules**
+  1. **Delete** the port 8000 rule from My IP.
+  2. **Add rule**: type **Custom TCP**, port **8000**, source **Custom** → type `sg-` and pick `milepost-ec2-alb-sg`, description `From the load balancer only`.
+  3. **Preview changes** → **Confirm**.
+
+![Preview: revoke the My IP rule, add port 8000 from the load balancer's group](screenshots/43_host_sg_from_alb.jpg)
+
+- **Delete and add, don't edit:** switching the existing rule's source to a security group fails with `You may not specify a referenced group id for an existing IPv4 CIDR rule.`
+- The new rule shows the group by ID; `sg-0d6b…` here is `milepost-ec2-alb-sg`.
+- **What happened:**
+  - Requests to the DNS name answered `200` straight away. While every target is unhealthy, the load balancer still sends requests to all of them.
+  - Both targets turned **Healthy** about 2 minutes later: 5 passing checks, 30 seconds apart.
+  - A call straight to an instance on port 8000 now times out: the load balancer is the only way in.
+
+![Both targets Healthy](screenshots/44_tg_healthy.jpg)
+
+- The target group page doesn't refresh by itself. Use its refresh button, or reload the page.
+
+### 12.6 Test it
 
 ```bash
 for i in $(seq 1 10); do curl -s http://<alb-dns-name>/; echo; done
 ```
 
-- **Expected:** answers alternate between `us-west-2a` and `us-west-2b`, all from one address.
-- **Repeat the stop experiment:**
-  - stop `milepost-ec2-a`;
-  - after a few failed health checks, the target group shows it as unhealthy or unused;
-  - every request then goes to `milepost-ec2-b`, and the URL never changes.
-- **Still true with the load balancer:** nothing replaces the stopped instance. Replacing failed machines is a separate feature, an EC2 Auto Scaling group.
+```json
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","instance_id":"i-0b1b108fa6ca2fbb6"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","instance_id":"i-0b1b108fa6ca2fbb6"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","instance_id":"i-0110ea28df2d5ceed"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","instance_id":"i-0110ea28df2d5ceed"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","instance_id":"i-0b1b108fa6ca2fbb6"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","instance_id":"i-0110ea28df2d5ceed"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","instance_id":"i-0b1b108fa6ca2fbb6"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","instance_id":"i-0110ea28df2d5ceed"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2b","instance_id":"i-0b1b108fa6ca2fbb6"}}
+{"service":"Milepost API","docs":"/docs","served_by":{"availability_zone":"us-west-2a","instance_id":"i-0110ea28df2d5ceed"}}
+```
+
+- **What happened:** one address, both machines: 5 answers from `us-west-2a`, 5 from `us-west-2b`, in no fixed order.
+- **In the browser:** `http://<alb-dns-name>/` (and `/docs`) work the same way. Reload a few times to see `served_by` change.
+
+![Through the load balancer: answered from us-west-2a](screenshots/45_alb_answers_a.png)
+
+![The same address: answered from us-west-2b](screenshots/46_alb_answers_b.png)
+
+### 12.7 Experiment: stop one instance again
+
+- **Before you click, predict:** what does a client of the DNS name see, and when?
+- In a terminal, send one request per second and print each status code (`000` means no answer within 5 seconds):
+
+```bash
+while true; do curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://<alb-dns-name>/; sleep 1; done
+```
+
+- Then stop `milepost-ec2-a` (**Instance state → Stop instance**, as in step 11).
+- **What happened:**
+
+| Time after Stop | What the requests got |
+|---|---|
+| First 35 seconds or so | Some failed: `502` twice, then 4 with no answer. The rest answered `200` from `us-west-2b` |
+| From about 40 seconds | Target A **Unused**, `Target is in the stopped state`. Every request answered `200` from `us-west-2b` |
+
+![A Unused while stopped, B Healthy](screenshots/47_tg_instance_stopped.jpg)
+
+- **Start it again:** A showed **Initial**, then **Healthy** about 45 seconds after the start, and answers came from both AZs again. No request failed.
+- Its public IP changed again (step 11). The target group tracks the instance ID, so nothing needed updating.
+- **What this shows:**
+  - Clients keep one address, and the load balancer routes around the stopped instance by itself.
+  - It notices only through health checks and the instance's state, so requests sent in the first half-minute can fail.
+  - **To take an instance out without errors,** deregister it first (**Targets → tick it → Deregister**). The target **drains**: no new requests, and the open ones finish. Then stop it.
+  - **Still true with the load balancer:** nothing replaces the stopped instance. Replacing failed machines is a separate feature, an EC2 Auto Scaling group.
 
 ## 13. Troubleshooting
 
@@ -544,27 +632,39 @@ for i in $(seq 1 10); do curl -s http://<alb-dns-name>/; echo; done
 | `docker build` stops at `pip install` with `Could not find a version… (from versions: none)` | pip timed out reaching PyPI from inside Docker | Run the build again; on a slow connection add `--timeout 100` to the `pip install` line |
 | Browser shows a warning page for `http://IP:8000` | Plain HTTP, no certificate | Continue past the warning, or use `curl` |
 | Launch fails with a message about the instance type | The account allows only certain types | Use `t3.micro` |
+| Targets **Unhealthy**, **Request timed out**; the DNS name answers `504 Gateway Time-out` after about 10 seconds | The instances' security group doesn't let the load balancer in | Allow port 8000 from `milepost-ec2-alb-sg` (step 12.5) |
+| `You may not specify a referenced group id for an existing IPv4 CIDR rule.` | An IP-address rule can't be switched to a security group source | Delete the rule and add a new one (step 12.5) |
+| A few `502` or unanswered requests right after an instance stops | The load balancer hasn't marked it unusable yet | Deregister the target before stopping the instance (step 12.7) |
+| The target group page still shows an old health status | The page doesn't refresh by itself | Its refresh button, or reload the page |
 
-![Fixing the rule: source type My IP fills in your current address](screenshots/40_fix_my_ip_rule.jpg)
+![Fixing the rule: source type My IP fills in your current address](screenshots/48_fix_my_ip_rule.jpg)
 
 ## 14. Clean up
 
 **A stopped instance still bills for its disk and any Elastic IP; delete everything in this order.**
 
-1. **Load balancer, if you created one:** delete `milepost-ec2-alb`, then the target group `milepost-ec2-tg`.
+1. **Load balancer:**
+   - **Load balancers → tick `milepost-ec2-alb` → Actions → Delete load balancer** → type `confirm` → **Delete**. Its listener goes with it; the target group stays.
+
+![Delete load balancer: type confirm](screenshots/49_delete_alb.jpg)
+
+   - **Target groups → tick `milepost-ec2-tg` → Actions → Delete → Delete.** The instances it lists are not touched.
+
+![Delete the target group](screenshots/50_delete_tg.jpg)
+
 2. **Instances:** select both → **Instance state → Terminate (delete) instance**. Their root disks are deleted with them.
 
-![Terminate both instances](screenshots/41_terminate_instances.jpg)
+![Terminate both instances](screenshots/51_terminate_instances.jpg)
 
 3. **VPC:** **VPC → Your VPCs → `milepost-ec2-vpc` → Actions → Delete VPC** → type `delete`. The dialog lists everything that goes with the VPC: the internet gateway, the route table, both security groups and both subnets.
 
-![Delete VPC lists the 6 resources deleted with it](screenshots/42_delete_vpc.jpg)
+![Delete VPC lists the 6 resources deleted with it](screenshots/52_delete_vpc.jpg)
 
-![The VPC and its 6 resources deleted](screenshots/43_vpc_deleted.jpg)
+![The VPC and its 6 resources deleted](screenshots/53_vpc_deleted.jpg)
 
 4. **ECR:** **Repositories → `milepost-ec2` → Delete** → type `delete`. This deletes the images inside it too.
 
-![Delete the milepost-ec2 repository](screenshots/44_delete_ecr_repo.jpg)
+![Delete the milepost-ec2 repository](screenshots/54_delete_ecr_repo.jpg)
 
 5. **IAM:** **Roles → `MilepostEc2Role` → Delete**. Some managed accounts deny role deletion. Then the role stays, unused: only EC2 can take it on, and no instance has it.
 6. **Laptop:**
@@ -574,6 +674,8 @@ for i in $(seq 1 10); do curl -s http://<alb-dns-name>/; echo; done
 - **Check that nothing is left.** Empty output means clean:
 
 ```bash
+aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerName' --output text
+aws elbv2 describe-target-groups --query 'TargetGroups[].TargetGroupName' --output text
 aws ec2 describe-instances --filters Name=instance-state-name,Values=pending,running,stopping,stopped \
   --query 'Reservations[].Instances[].InstanceId' --output text
 aws ec2 describe-vpcs --filters Name=is-default,Values=false --query 'Vpcs[].VpcId' --output text
@@ -605,6 +707,6 @@ aws ecr describe-repositories --query 'repositories[].repositoryName' --output t
 | Public IPv4 address | $0.005 per hour each |
 | 8 GiB gp3 disk | about $0.64 per month each, billed even while stopped |
 | ECR storage | $0.10 per GB-month (the 165 MB image: about $0.02 per month) |
-| Load balancer, if created | $0.0225 per hour plus usage (LCU) |
+| Load balancer | $0.0225 per hour plus usage (LCU), and $0.005 per hour for each of its public IPv4 addresses (one per AZ here) |
 
-- Both instances running cost about **$0.03 per hour, roughly $0.75 per day**. Cleaning up ends all of it.
+- Both instances running cost about **$0.03 per hour, roughly $0.75 per day**. The load balancer adds about **$0.035 per hour**. Cleaning up ends all of it.

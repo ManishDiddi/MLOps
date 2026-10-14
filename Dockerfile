@@ -15,11 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the current directory contents into the container at /flask-loan-app
 COPY lec9_CI/ /flask-loan-app
 
-# Make port 8000 available to the world outside this container
-CMD ["python", "-m", "flask", "--app", "hello_flask.py", "run", "--host=0.0.0.0", "--port=9000"]
+# Make port 8000 available to the world outside this container (the ECS task definition maps 8000)
+CMD ["python", "-m", "flask", "--app", "hello_flask.py", "run", "--host=0.0.0.0", "--port=8000"]
 
 
 # RUN command runs only once, when the container is being built. CMD command runs every time the container is started.
 
-#docker run -p 8000:9000 oct8
-# first 8000 is host port and second 9000 is container port
+#docker run -p 9000:8000 oct8
+# first 9000 is host port and second 8000 is container port

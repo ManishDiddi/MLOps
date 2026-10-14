@@ -42,9 +42,9 @@ transmission_type = st.selectbox("Transmission Type", ["Manual", "Automatic"])
 
 seats = st.number_input("Seats", min_value=2, max_value=10, value=5, step=1)
 
-# Load the trained model and scaler
-model = joblib.load("cars24_model.joblib")
-scaler = joblib.load("scaler.pkl")
+# Load the trained model and scaler from this file's folder (Streamlit Cloud runs the app from the repo root)
+model = joblib.load(HERE / "cars24_model.joblib")
+scaler = joblib.load(HERE / "scaler.pkl")
 
 #with open(HERE / "cars24_model.pkl", "rb") as f:
 #	model = pickle.load(f)

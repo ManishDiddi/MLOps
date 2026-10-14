@@ -107,7 +107,7 @@ START — One Milepost API, deployed on two EC2 machines
   │
   ▼
 [STEP 12 · OPTIONAL] Want ONE address and healthy-instance routing?
-  │                     (documented in README, NOT executed in its account)
+  │                     (run in the README, on a rebuild of the same setup)
   │
   ├── NO ──→ Keep two independent public endpoints; manual switching
   │
