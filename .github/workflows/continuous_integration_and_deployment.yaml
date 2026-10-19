@@ -1,95 +1,129 @@
-#yet another markup languag
+# Run the tests and the model gate on every pull request and on every push to master.
+# After a push to master, deploy to ECS, but only if both passed.
 
 name: CI
 
-
 on:
+  pull_request:                 # every pull request
   push:
-    branches: 
-        - main
-        - master
-        - any-feature-branch
+    branches:
+      - master
+  workflow_dispatch:            # adds a "Run workflow" button on the Actions tab
 
-
+# Every `run:` step below runs inside the app's folder: the tests, evaluate.py and `docker build .`.
+# Steps with `uses:` still start at the repo root.
+defaults:
+  run:
+    working-directory: "lec8 Deploying on AWS ECS"
 
 jobs:
-    
-    #job1:
-    #    runs-on: ubuntu-latest # can even have macos-latest or windows-latest
-    #    steps:
-    #        - name: Checkout code
-    #          uses: actions/checkout@v7  # v7 is the version of the action we're using, not the branch of the code; https://github.com/actions/checkout 
-    #    # purpose of checkout code is to get the code from the repository, and put it in the runner machine
-    #        - name: Set up Python
-    #          uses: actions/setup-python@v7  # https://github.com/actions/setup-python
-    #          with:
-    #            python-version: '3.12'  # Specify the Python version you want to use
 
-    #        - name: Install dependencies
-    #          run: |
-    #            python -m pip install --upgrade pip
-    #            pip install -r requirements.txt  # Install dependencies from requirements.txt
-    #        - name: Run tests
-    #          run: |
-    #                pytest
-    
-    #job2: 
-    #    needs: job1  # This job will run after job1 completes successfully  [lint, test-unit]
-    #    runs-on: ubuntu-latest
-    #    steps:
-    #        - name: Checkout code
-    #          uses: actions/checkout@v7  # v7 is the version of the action we're using, not the branch of the code;
-    #        - name: Login to DockerHub
-    #          uses: docker/login-action@v4
-    #          with:
-    #            username: ${{ secrets.DOCKER_USERNAME }}
-    #            password: ${{ secrets.DOCKER_PASSWORD }}
-    #        - name: Build Docker image
-    #          uses: docker/build-push-action@v7 #https://github.com/docker/build-push-action
-    #          with:
-    #            push: true
-    #            tags: shivam13juna/oct7_2026_live_ci:latest  # Replace with your Docker Hub username and image name
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
 
-    job3:
-      #needs: job1
-      runs-on: ubuntu-latest
-      steps:
-        - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"        # the same Python as the Docker image (python:3.10-slim)
 
-        - name: Configure AWS credentials
-          uses: aws-actions/configure-aws-credentials@v1
+      - name: Install dependencies
+        run: pip install -r artefacts/requirements.txt pytest==7.4.4
+
+      - name: Run the tests
+        run: python -m pytest -v
+
+
+  job2: 
+    needs: test  # This job will run after test completes successfully  [lint, test-unit]
+    runs-on: ubuntu-latest
+    steps:
+        - name: Checkout code
+          uses: actions/checkout@v7  # v7 is the version of the action we're using, not the branch of the code;
+        - name: Login to DockerHub
+          uses: docker/login-action@v4
           with:
-            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-            aws-region: us-west-2  # Replace with your desired AWS region
-
-        - name: Login to Amazon ECR
-          id: login-ecr
-          uses: aws-actions/amazon-ecr-login@v2
-
-        - name: Build, tag, and push image to Amazon ECR
-          id: build-image
-          env:
-            ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-            ECR_REPOSITORY: leviathan-ecr
-            IMAGE_TAG: ${{ github.sha }}
-          run: |
-            docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-            docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-            echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-        - name: Fill in the new image ID in the Amazon ECS task definition
-          id: task-def
-          uses: aws-actions/amazon-ecs-render-task-definition@v1
+            username: ${{ secrets.DOCKER_USERNAME }}
+            password: ${{ secrets.DOCKER_PASSWORD }}
+        - name: Build Docker image
+          uses: docker/build-push-action@v7 #https://github.com/docker/build-push-action
           with:
-            task-definition: leviathan-task-revision1.json
-            container-name: leviathan-container
-            image: ${{ steps.build-image.outputs.image }}
+            push: true
+            tags: shivam13juna/oct7_2026_live_ci:latest  # Replace with your Docker Hub username and image name
 
-        - name: Deploy Amazon ECS task definition
-          uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-          with:
-            task-definition: ${{ steps.task-def.outputs.task-definition }}
-            service: leviathan-service
-            cluster: leviathan-cluster
-            wait-for-service-stability: true
+
+  model-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r artefacts/requirements.txt pandas==2.3.3
+
+      # checkout fetches only the commit being tested, so master's model isn't in the runner yet
+      - name: Fetch master, to compare against its model
+        run: git fetch --depth=1 origin master:refs/remotes/origin/master
+
+      - name: Score this change's model against master's
+        run: python "lec12 Pending CD /evaluate.py"
+
+  deploy:
+    needs: [test, model-gate]       # starts only if both passed
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'   # never from a pull request, only from master
+    runs-on: ubuntu-latest
+    steps:
+      
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r artefacts/requirements.txt pandas==2.3.3
+      #- uses: actions/checkout@v7
+
+      #- name: Configure AWS credentials
+      #  uses: aws-actions/configure-aws-credentials@v1
+      #  with:
+      #    aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #    aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #    aws-region: us-west-2  # Replace with your desired AWS region
+
+      #- name: Login to Amazon ECR
+      #  id: login-ecr
+      #  uses: aws-actions/amazon-ecr-login@v2
+
+      ## runs in the app's folder (see defaults), so `.` builds that folder's Dockerfile
+      #- name: Build, tag, and push image to Amazon ECR
+      #  id: build-image
+      #  env:
+      #    ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      #    ECR_REPOSITORY: testingdemo-ecr
+      #    IMAGE_TAG: ${{ github.sha }}
+      #  run: |
+      #    docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+      #    docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+      #    echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      #- name: Fill in the new image ID in the Amazon ECS task definition
+      #  id: task-def
+      #  uses: aws-actions/amazon-ecs-render-task-definition@v1
+      #  with:
+      #    task-definition: testingdemo-task-revision1.json
+      #    container-name: testingdemo-container
+      #    image: ${{ steps.build-image.outputs.image }}
+
+      #- name: Deploy Amazon ECS task definition
+      #  uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+      #  with:
+      #    task-definition: ${{ steps.task-def.outputs.task-definition }}
+      #    service: testingdemo-service
+      #    cluster: testingdemo-cluster
+      #    wait-for-service-stability: true
