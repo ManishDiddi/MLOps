@@ -1,3 +1,4 @@
 **/*.DS_Store
 __pycache__/
 .pytest_cache/
+lec12 Sagemaker-1/aws_config.cfg
