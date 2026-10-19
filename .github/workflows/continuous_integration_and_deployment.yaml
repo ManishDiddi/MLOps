@@ -12,9 +12,9 @@ on:
 
 # Every `run:` step below runs inside the app's folder: the tests, evaluate.py and `docker build .`.
 # Steps with `uses:` still start at the repo root.
-defaults:
-  run:
-    working-directory: "lec8 Deploying on AWS ECS"
+#defaults:
+#  run:
+#    working-directory: "lec8 Deploying on AWS ECS"
 
 jobs:
 
