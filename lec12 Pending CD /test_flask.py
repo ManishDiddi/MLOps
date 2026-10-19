@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from hello import pancakes
+from hello_flask import pancakes
 
 
 # purpose of fixture is to create resources that can be shared across tests
