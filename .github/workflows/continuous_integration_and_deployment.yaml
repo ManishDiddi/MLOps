@@ -74,6 +74,7 @@ jobs:
         run: python "lec12 Pending CD /evaluate.py"
 
   deploy:
+    environment: staging
     needs: [test, model-gate]       # starts only if both passed
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'   # never from a pull request, only from master
     runs-on: ubuntu-latest
