@@ -1,0 +1,53 @@
+# Put the ECS service back on an earlier release, by the commit it was built from.
+# Started by hand from the Actions tab. No build and no tests: the image is the one
+# the pipeline built, tested and deployed the first time.
+
+name: Roll back
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit SHA of the release to go back to
+        required: true
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    env:
+      # Typed text goes through an environment variable, never straight into a script.
+      SHA: ${{ inputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2  # Replace with your desired AWS region
+
+      # Fails, and deploys nothing, if the pipeline never built an image from that commit
+      - name: Find the image for that commit
+        id: image
+        run: |
+          URI=$(aws ecr describe-repositories --repository-names testingdemo-ecr \
+            --query 'repositories[0].repositoryUri' --output text)
+          aws ecr describe-images --repository-name testingdemo-ecr --image-ids imageTag="$SHA" >/dev/null
+          echo "image=$URI:$SHA" >> $GITHUB_OUTPUT
+
+      - name: Fill in that image in the Amazon ECS task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: testingdemo-task-revision1.json
+          container-name: testingdemo-container
+          image: ${{ steps.image.outputs.image }}
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: testingdemo-service
+          cluster: testingdemo-cluster
+          wait-for-service-stability: true

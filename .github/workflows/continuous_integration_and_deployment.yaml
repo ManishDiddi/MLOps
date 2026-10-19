@@ -86,7 +86,7 @@ jobs:
           python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install -r artefacts/requirements.txt pandas==2.3.3
+        run: pip install -r lec9_CI/requirements.txt pandas==2.3.3
       #- uses: actions/checkout@v7
 
       #- name: Configure AWS credentials
