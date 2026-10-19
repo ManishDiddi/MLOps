@@ -50,7 +50,7 @@ def main():
 
     new = joblib.load('lec9_CI/classifier.pkl')
     old = load_from_master()
-    a, b = score(old, X, y), score(new, X, y)
+    a, b = score(old, X, y), score(new, X, y) # old refers to model currently on master, new refers to the model in this change
 
     lines = [f"| train_flask.csv, {len(y)} applications | master | this change |", "|---|---|---|",
              f"| accuracy | {a['accuracy']:.3f} | {b['accuracy']:.3f} |",
